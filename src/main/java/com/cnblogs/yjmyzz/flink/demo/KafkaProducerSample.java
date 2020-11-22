@@ -8,6 +8,9 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
 
+/**
+ * @author 菩提树下的杨过
+ */
 public class KafkaProducerSample {
 
     public static String topic = "test1";
