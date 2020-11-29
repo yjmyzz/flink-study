@@ -27,7 +27,7 @@ public class KafkaProducerSample {
         p.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         KafkaProducer<String, String> kafkaProducer = new KafkaProducer<>(p);
 
-        String[] words = new String[]{"hello", "world", "java", "flink", "scala", "spring", "hive", "spark"};
+        String[] words = new String[]{"hello", "world", "flink"};
         Random rnd = new Random();
         try {
             while (true) {

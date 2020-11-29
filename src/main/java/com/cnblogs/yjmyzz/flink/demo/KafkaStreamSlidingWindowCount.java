@@ -25,12 +25,11 @@ import java.util.Properties;
 /**
  * @author 菩提树下的杨过(http : / / yjmyzz.cnblogs.com /)
  */
-public class KafkaStreamTumblingWindowCount {
+public class KafkaStreamSlidingWindowCount {
 
     private final static Gson gson = new Gson();
     private final static String SOURCE_TOPIC = "test3";
     private final static String SINK_TOPIC = "test4";
-    private final static SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:00");
 
     public static void main(String[] args) throws Exception {
 
@@ -44,7 +43,7 @@ public class KafkaStreamTumblingWindowCount {
         Properties props = new Properties();
         props.put("bootstrap.servers", "localhost:9092");
         props.put("zookeeper.connect", "localhost:2181");
-        props.put("group.id", "test-read-group-2");
+        props.put("group.id", "test-read-group-1");
         props.put("deserializer.encoding", "GB2312");
         props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
         props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
@@ -56,7 +55,7 @@ public class KafkaStreamTumblingWindowCount {
                 props));
 
         // 3. 处理逻辑
-        DataStream<Tuple3<String, Integer, String>> counts = text.assignTimestampsAndWatermarks(new WatermarkStrategy<String>() {
+        DataStream<Tuple2<String, Integer>> counts = text.assignTimestampsAndWatermarks(new WatermarkStrategy<String>() {
             @Override
             public WatermarkGenerator<String> createWatermarkGenerator(WatermarkGeneratorSupplier.Context context) {
                 return new WatermarkGenerator<String>() {
@@ -77,36 +76,36 @@ public class KafkaStreamTumblingWindowCount {
                     }
                 };
             }
-        }).flatMap(new FlatMapFunction<String, Tuple3<String, Integer, String>>() {
+        }).flatMap(new FlatMapFunction<String, Tuple2<String, Integer>>() {
+
             @Override
-            public void flatMap(String value, Collector<Tuple3<String, Integer, String>> out) throws Exception {
+            public void flatMap(String value, Collector<Tuple2<String, Integer>> out) throws Exception {
                 //解析message中的json
                 Map<String, String> map = gson.fromJson(value, new TypeToken<Map<String, String>>() {
                 }.getType());
 
+
                 //收集(类似:map-reduce思路)
                 String word = map.getOrDefault("word", "");
-                String eventTimestamp = map.getOrDefault("event_timestamp", "0");
-                String windowTime = sdf.format(new Date(Long.parseLong(eventTimestamp)));
                 if (word != null && word.trim().length() > 0) {
-                    out.collect(new Tuple3<>(word.trim(), 1, windowTime));
+                    out.collect(new Tuple2<>(word.trim(), 1));
                 }
 
             }
         })
                 //按Tuple2里的第0项，即：word分组
                 .keyBy(value -> value.f0)
-                //按每1分整点开固定窗口计算
-                .timeWindow(Time.minutes(1))
+                //每1分钟算1次，每次算过去2分钟内的数据
+                .timeWindow(Time.minutes(2), Time.minutes(1))
                 //然后对Tuple3里的第1项求合
                 .sum(1);
 
         // 4. 打印结果
         counts.addSink(new FlinkKafkaProducer010<>("localhost:9092", SINK_TOPIC,
-                (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.f2 + " (" + element.f0 + "," + element.f1 + ")").getBytes()));
+                (SerializationSchema<Tuple2<String, Integer>>) element -> ("(" + element.f0 + "," + element.f1 + ")").getBytes()));
         counts.print();
 
-        System.out.println("\n-------");
+        System.out.println("\n------");
 
         // execute program
         env.execute("Kafka Streaming WordCount");
