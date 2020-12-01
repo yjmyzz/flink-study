@@ -39,7 +39,7 @@ public class KafkaProducerSample {
                 String msg = gson.toJson(map);
                 ProducerRecord<String, String> record = new ProducerRecord<String, String>(topic, msg);
                 kafkaProducer.send(record);
-                System.out.println("message send success:" + msg);
+                System.out.println(msg);
                 Thread.sleep(10000);
             }
         } finally {

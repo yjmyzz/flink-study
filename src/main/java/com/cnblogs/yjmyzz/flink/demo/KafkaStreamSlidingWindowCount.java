@@ -31,7 +31,8 @@ public class KafkaStreamSlidingWindowCount {
     private final static Gson gson = new Gson();
     private final static String SOURCE_TOPIC = "test3";
     private final static String SINK_TOPIC = "test4";
-    private final static SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:00");
+    private final static SimpleDateFormat sdf1 = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+    private final static SimpleDateFormat sdf2 = new SimpleDateFormat("HH:mm");
 
     public static void main(String[] args) throws Exception {
 
@@ -87,12 +88,13 @@ public class KafkaStreamSlidingWindowCount {
                 }.getType());
 
                 String eventTimestamp = map.getOrDefault("event_timestamp", "0");
-                String windowTime = sdf.format(new Date(TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 2 * 60 * 1000, 1 * 60 * 1000)));
+                String windowTimeStart = sdf1.format(new Date(TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 2 * 60 * 1000, 1 * 60 * 1000)));
+                String windowTimeEnd = sdf2.format(new Date(1 * 60 * 1000 + TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 2 * 60 * 1000, 1 * 60 * 1000)));
 
                 //收集(类似:map-reduce思路)
                 String word = map.getOrDefault("word", "");
                 if (word != null && word.trim().length() > 0) {
-                    out.collect(new Tuple3<>(word.trim(), 1, windowTime));
+                    out.collect(new Tuple3<>(word.trim(), 1, windowTimeStart + " ~ " + windowTimeEnd));
                 }
 
             }

@@ -31,7 +31,7 @@ public class KafkaStreamTumblingWindowCount {
     private final static Gson gson = new Gson();
     private final static String SOURCE_TOPIC = "test3";
     private final static String SINK_TOPIC = "test4";
-    private final static SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:00");
+    private final static SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
 
     public static void main(String[] args) throws Exception {
 
