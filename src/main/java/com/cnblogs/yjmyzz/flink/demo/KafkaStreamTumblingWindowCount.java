@@ -13,6 +13,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer011;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer010;
 import org.apache.flink.util.Collector;
@@ -61,7 +62,7 @@ public class KafkaStreamTumblingWindowCount {
             public WatermarkGenerator<String> createWatermarkGenerator(WatermarkGeneratorSupplier.Context context) {
                 return new WatermarkGenerator<String>() {
                     private long maxTimestamp;
-                    private long delay = 1000;
+                    private long delay = 100;
 
                     @Override
                     public void onEvent(String s, long l, WatermarkOutput watermarkOutput) {
@@ -87,7 +88,7 @@ public class KafkaStreamTumblingWindowCount {
                 //收集(类似:map-reduce思路)
                 String word = map.getOrDefault("word", "");
                 String eventTimestamp = map.getOrDefault("event_timestamp", "0");
-                String windowTime = sdf.format(new Date(Long.parseLong(eventTimestamp)));
+                String windowTime = sdf.format(new Date(TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 0, 60 * 1000)));
                 if (word != null && word.trim().length() > 0) {
                     out.collect(new Tuple3<>(word.trim(), 1, windowTime));
                 }
@@ -105,8 +106,6 @@ public class KafkaStreamTumblingWindowCount {
         counts.addSink(new FlinkKafkaProducer010<>("localhost:9092", SINK_TOPIC,
                 (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.f2 + " (" + element.f0 + "," + element.f1 + ")").getBytes()));
         counts.print();
-
-        System.out.println("\n-------");
 
         // execute program
         env.execute("Kafka Streaming WordCount");

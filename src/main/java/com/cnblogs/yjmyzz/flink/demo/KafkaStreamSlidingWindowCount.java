@@ -13,6 +13,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer011;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer010;
 import org.apache.flink.util.Collector;
@@ -30,6 +31,7 @@ public class KafkaStreamSlidingWindowCount {
     private final static Gson gson = new Gson();
     private final static String SOURCE_TOPIC = "test3";
     private final static String SINK_TOPIC = "test4";
+    private final static SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:00");
 
     public static void main(String[] args) throws Exception {
 
@@ -55,7 +57,7 @@ public class KafkaStreamSlidingWindowCount {
                 props));
 
         // 3. 处理逻辑
-        DataStream<Tuple2<String, Integer>> counts = text.assignTimestampsAndWatermarks(new WatermarkStrategy<String>() {
+        DataStream<Tuple3<String, Integer, String>> counts = text.assignTimestampsAndWatermarks(new WatermarkStrategy<String>() {
             @Override
             public WatermarkGenerator<String> createWatermarkGenerator(WatermarkGeneratorSupplier.Context context) {
                 return new WatermarkGenerator<String>() {
@@ -76,19 +78,21 @@ public class KafkaStreamSlidingWindowCount {
                     }
                 };
             }
-        }).flatMap(new FlatMapFunction<String, Tuple2<String, Integer>>() {
+        }).flatMap(new FlatMapFunction<String, Tuple3<String, Integer, String>>() {
 
             @Override
-            public void flatMap(String value, Collector<Tuple2<String, Integer>> out) throws Exception {
+            public void flatMap(String value, Collector<Tuple3<String, Integer, String>> out) throws Exception {
                 //解析message中的json
                 Map<String, String> map = gson.fromJson(value, new TypeToken<Map<String, String>>() {
                 }.getType());
 
+                String eventTimestamp = map.getOrDefault("event_timestamp", "0");
+                String windowTime = sdf.format(new Date(TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 2 * 60 * 1000, 1 * 60 * 1000)));
 
                 //收集(类似:map-reduce思路)
                 String word = map.getOrDefault("word", "");
                 if (word != null && word.trim().length() > 0) {
-                    out.collect(new Tuple2<>(word.trim(), 1));
+                    out.collect(new Tuple3<>(word.trim(), 1, windowTime));
                 }
 
             }
@@ -102,10 +106,8 @@ public class KafkaStreamSlidingWindowCount {
 
         // 4. 打印结果
         counts.addSink(new FlinkKafkaProducer010<>("localhost:9092", SINK_TOPIC,
-                (SerializationSchema<Tuple2<String, Integer>>) element -> ("(" + element.f0 + "," + element.f1 + ")").getBytes()));
+                (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.f2 + " (" + element.f0 + "," + element.f1 + ")").getBytes()));
         counts.print();
-
-        System.out.println("\n------");
 
         // execute program
         env.execute("Kafka Streaming WordCount");
