@@ -12,7 +12,7 @@ import java.util.*;
 /**
  * @author 菩提树下的杨过
  */
-public class KafkaProducerSample {
+public class KafkaProducerWordCountSample {
 
     private static String topic = "test3";
 
@@ -45,6 +45,5 @@ public class KafkaProducerSample {
         } finally {
             kafkaProducer.close();
         }
-
     }
 }

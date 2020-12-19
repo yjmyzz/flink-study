@@ -85,17 +85,18 @@ public class KafkaStreamTumblingWindowCount {
                 Map<String, String> map = gson.fromJson(value, new TypeToken<Map<String, String>>() {
                 }.getType());
 
-                //收集(类似:map-reduce思路)
                 String word = map.getOrDefault("word", "");
                 String eventTimestamp = map.getOrDefault("event_timestamp", "0");
+                //获取每个统计窗口的时间（用于显示）
                 String windowTime = sdf.format(new Date(TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 0, 60 * 1000)));
                 if (word != null && word.trim().length() > 0) {
+                    //收集(类似:map-reduce思路)
                     out.collect(new Tuple3<>(word.trim(), 1, windowTime));
                 }
 
             }
         })
-                //按Tuple2里的第0项，即：word分组
+                //按Tuple3里的第0项，即：word分组
                 .keyBy(value -> value.f0)
                 //按每1分整点开固定窗口计算
                 .timeWindow(Time.minutes(1))

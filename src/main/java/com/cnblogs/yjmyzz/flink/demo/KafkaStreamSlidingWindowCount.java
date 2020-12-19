@@ -99,7 +99,7 @@ public class KafkaStreamSlidingWindowCount {
 
             }
         })
-                //按Tuple2里的第0项，即：word分组
+                //按Tuple3里的第0项，即：word分组
                 .keyBy(value -> value.f0)
                 //每1分钟算1次，每次算过去2分钟内的数据
                 .timeWindow(Time.minutes(2), Time.minutes(1))
