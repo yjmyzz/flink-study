@@ -28,13 +28,13 @@ public class KafkaProducerEmpStatusSample {
         KafkaProducer<String, String> kafkaProducer = new KafkaProducer<>(p);
 
         String[] status = new String[]{"online", "offline"};
-        String[] employee = new String[]{"jerry"};
+        String[] employee = new String[]{"jerry", "mike"};
         Random rnd = new Random();
         try {
             while (true) {
                 Map<String, String> map = new HashMap<>();
                 map.put("status", status[rnd.nextInt(status.length)]);
-                map.put("employee", employee[0]);
+                map.put("employee", employee[rnd.nextInt(status.length)]);
                 long timestamp = System.currentTimeMillis();
                 map.put("event_timestamp", timestamp + "");
                 map.put("event_datetime", sdf.format(new Date(timestamp)));

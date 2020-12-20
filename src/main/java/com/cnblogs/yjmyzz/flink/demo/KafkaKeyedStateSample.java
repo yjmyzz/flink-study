@@ -3,9 +3,12 @@ package com.cnblogs.yjmyzz.flink.demo;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple2;
@@ -16,6 +19,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer011;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer010;
 import org.apache.flink.util.Collector;
+import org.apache.flink.util.StringUtils;
 
 import java.text.SimpleDateFormat;
 import java.util.Map;
@@ -53,48 +57,73 @@ public class KafkaKeyedStateSample {
                 props));
 
         // 3. 处理逻辑
-        DataStream<Tuple2<String, Long>> counts = text.flatMap(new FlatMapFunction<String, Tuple2<String, Long>>() {
+        DataStream<Tuple2<String, Long>> counts = text.flatMap(new FlatMapFunction<String, Tuple2<String, Map<String, String>>>() {
             @Override
-            public void flatMap(String value, Collector<Tuple2<String, Long>> out) throws Exception {
+            public void flatMap(String value, Collector<Tuple2<String, Map<String, String>>> out) throws Exception {
+                if (StringUtils.isNullOrWhitespaceOnly(value)) {
+                    return;
+                }
                 //解析message中的json
                 Map<String, String> map = gson.fromJson(value, new TypeToken<Map<String, String>>() {
                 }.getType());
-
                 String employee = map.getOrDefault("employee", "");
-                String status = map.getOrDefault("status", "");
-                Long eventTimestamp = Long.parseLong(map.getOrDefault("event_timestamp", "0"));
-                out.collect(new Tuple2<>(employee + ":" + status, eventTimestamp));
+                out.collect(new Tuple2<>(employee, map));
             }
         })
 
-                .keyBy(value -> value.f0).flatMap(new RichFlatMapFunction<Tuple2<String, Long>, Tuple2<String, Long>>() {
-
-                    private ValueState<Long> lastStatusTimestamp = null;
-                    private ValueState<Long> lastStatusDuration = null;
+                .keyBy(value -> value.f0)
+                .flatMap(new RichFlatMapFunction<Tuple2<String, Map<String, String>>, Tuple2<String, Long>>() {
+                    //保存最后1次上报状态的时间戳
+                    ValueState<Long> lastTimestamp = null;
+                    //保存最后1次的状态
+                    ValueState<String> lastStatus = null;
+                    //记录每个状态的持续时长累加值
+                    MapState<String, Long> statusDuration = null;
 
                     @Override
-                    public void open(Configuration parameters) {
-                        ValueStateDescriptor lastStatusTimestampDescriptor = new ValueStateDescriptor("lastStatusTimestampState", Long.class);
-                        lastStatusTimestamp = getRuntimeContext().getState(lastStatusTimestampDescriptor);
+                    public void open(Configuration parameters) throws Exception {
+                        ValueStateDescriptor<Long> lastTimestampDescriptor = new ValueStateDescriptor<>("lastTimestamp", Long.class);
+                        lastTimestamp = getRuntimeContext().getState(lastTimestampDescriptor);
 
-                        ValueStateDescriptor lastStatusDurationDescriptor = new ValueStateDescriptor("lastStatusDurationState", Long.class);
-                        lastStatusDuration = getRuntimeContext().getState(lastStatusDurationDescriptor);
+                        ValueStateDescriptor<String> lastStatusDescriptor = new ValueStateDescriptor<>("lastStatus", String.class);
+                        lastStatus = getRuntimeContext().getState(lastStatusDescriptor);
+
+                        MapStateDescriptor<String, Long> statusDurationDescriptor = new MapStateDescriptor<>("statusDuration", String.class, Long.class);
+                        statusDuration = getRuntimeContext().getMapState(statusDurationDescriptor);
                     }
 
                     @Override
-                    public void flatMap(Tuple2<String, Long> value, Collector<Tuple2<String, Long>> out) throws Exception {
-                        if (lastStatusTimestamp == null || lastStatusTimestamp.value() == null) {
-                            out.collect(new Tuple2<>(value.f0, 0L));
-                            lastStatusDuration.update(0L);
+                    public void flatMap(Tuple2<String, Map<String, String>> in, Collector<Tuple2<String, Long>> out) throws Exception {
+                        long timestamp = Long.parseLong(in.f1.get("event_timestamp"));
+                        String employee = in.f1.get("employee");
+                        String empStatus = in.f1.get("status");
+                        String collectEmpStatus = empStatus;
+                        long duration = 0;
+                        if (lastTimestamp == null || lastTimestamp.value() == null) {
+                            //第1条数据
+                            duration = 0;
+                        } else if (timestamp > lastTimestamp.value()) { //不接受乱序数据
+                            if (empStatus.equalsIgnoreCase(lastStatus.value())) {
+                                //状态没变，时长累加
+                                duration = statusDuration.get(collectEmpStatus) + (timestamp - lastTimestamp.value());
+                            } else {
+                                //状态变了,上次的状态时长累加
+                                collectEmpStatus = lastStatus.value();
+                                duration = statusDuration.get(collectEmpStatus) + (timestamp - lastTimestamp.value());
+                            }
                         } else {
-                            long duration = value.f1 - lastStatusTimestamp.value();
-                            lastStatusDuration.update(lastStatusDuration.value() + duration);
-                            out.collect(new Tuple2<>(value.f0, lastStatusDuration.value()));
+                            return;
                         }
-                        lastStatusTimestamp.update(value.f1);
+                        lastTimestamp.update(timestamp);
+                        lastStatus.update(empStatus);
+                        statusDuration.put(collectEmpStatus, duration);
+                        if (!collectEmpStatus.equalsIgnoreCase(empStatus) && !statusDuration.contains(empStatus)) {
+                            statusDuration.put(empStatus, 0L);
+                        }
+                        out.collect(new Tuple2<>(employee + ":" + collectEmpStatus, duration));
                     }
-                }).keyBy(value -> value.f0).sum(1);
-
+                })
+                .keyBy(v -> v.f0);
 
         // 4. 打印结果
         counts.addSink(new FlinkKafkaProducer010<>("localhost:9092", SINK_TOPIC,
@@ -102,7 +131,7 @@ public class KafkaKeyedStateSample {
         counts.print();
 
         // execute program
-        env.execute("Kafka Streaming WordCount");
+        env.execute("Kafka Streaming KeyedState sample");
 
     }
 
