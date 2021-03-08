@@ -1,26 +1,22 @@
 package com.cnblogs.yjmyzz.flink.demo;
 
+import akka.japi.tuple.Tuple3;
 import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-import org.apache.flink.api.common.eventtime.*;
 import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.streaming.api.TimeCharacteristic;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.DataStreamSource;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer011;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer010;
-import org.apache.flink.util.Collector;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -51,61 +47,40 @@ public class KafkaStreamTumblingWindowCount {
         props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
         props.put("auto.offset.reset", "latest");
 
-        DataStreamSource<String> text = env.addSource(new FlinkKafkaConsumer011<>(
-                SOURCE_TOPIC,
-                new SimpleStringSchema(),
-                props));
-
-        // 3. 处理逻辑
-        DataStream<Tuple3<String, Integer, String>> counts = text.assignTimestampsAndWatermarks(new WatermarkStrategy<String>() {
-            @Override
-            public WatermarkGenerator<String> createWatermarkGenerator(WatermarkGeneratorSupplier.Context context) {
-                return new WatermarkGenerator<String>() {
-                    private long maxTimestamp;
-                    private long delay = 100;
-
-                    @Override
-                    public void onEvent(String s, long l, WatermarkOutput watermarkOutput) {
-                        Map<String, String> map = gson.fromJson(s, new TypeToken<Map<String, String>>() {
-                        }.getType());
-                        String timestamp = map.getOrDefault("event_timestamp", l + "");
-                        maxTimestamp = Math.max(maxTimestamp, Long.parseLong(timestamp));
+        // 3.处理逻辑
+        SingleOutputStreamOperator<Tuple3<String, Integer, String>> counts = env
+                .addSource(
+                        new FlinkKafkaConsumer011<>(
+                                SOURCE_TOPIC,
+                                new SimpleStringSchema(),
+                                props))
+                .map((MapFunction<String, WordCountPojo>) value -> {
+                    WordCountPojo pojo = gson.fromJson(value, WordCountPojo.class);
+                    return pojo;
+                })
+                .assignTimestampsAndWatermarks(
+                        new BoundedOutOfOrdernessTimestampExtractor<WordCountPojo>(Time.milliseconds(200)) {
+                            @Override
+                            public long extractTimestamp(WordCountPojo element) {
+                                return element.eventTimestamp;
+                            }
+                        })
+                .flatMap((FlatMapFunction<WordCountPojo, Tuple3<String, Integer, String>>) (value, out) -> {
+                    String word = value.word;
+                    //获取每个统计窗口的时间（用于显示）
+                    String windowTime = sdf.format(new Date(TimeWindow.getWindowStartWithOffset(value.eventTimestamp, 0, 60 * 1000)));
+                    if (word != null && word.trim().length() > 0) {
+                        //收集(类似:map-reduce思路)
+                        out.collect(new Tuple3<>(word.trim(), 1, windowTime));
                     }
-
-                    @Override
-                    public void onPeriodicEmit(WatermarkOutput watermarkOutput) {
-                        watermarkOutput.emitWatermark(new Watermark(maxTimestamp - delay));
-                    }
-                };
-            }
-        }).flatMap(new FlatMapFunction<String, Tuple3<String, Integer, String>>() {
-            @Override
-            public void flatMap(String value, Collector<Tuple3<String, Integer, String>> out) throws Exception {
-                //解析message中的json
-                Map<String, String> map = gson.fromJson(value, new TypeToken<Map<String, String>>() {
-                }.getType());
-
-                String word = map.getOrDefault("word", "");
-                String eventTimestamp = map.getOrDefault("event_timestamp", "0");
-                //获取每个统计窗口的时间（用于显示）
-                String windowTime = sdf.format(new Date(TimeWindow.getWindowStartWithOffset(Long.parseLong(eventTimestamp), 0, 60 * 1000)));
-                if (word != null && word.trim().length() > 0) {
-                    //收集(类似:map-reduce思路)
-                    out.collect(new Tuple3<>(word.trim(), 1, windowTime));
-                }
-
-            }
-        })
-                //按Tuple3里的第0项，即：word分组
-                .keyBy(value -> value.f0)
-                //按每1分整点开固定窗口计算
+                })
+                .keyBy(v -> v.t1())
                 .timeWindow(Time.minutes(1))
-                //然后对Tuple3里的第1项求合
                 .sum(1);
 
         // 4. 打印结果
         counts.addSink(new FlinkKafkaProducer010<>("localhost:9092", SINK_TOPIC,
-                (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.f2 + " (" + element.f0 + "," + element.f1 + ")").getBytes()));
+                (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.t3() + " (" + element.t1() + "," + element.t2() + ")").getBytes()));
         counts.print();
 
         // execute program
