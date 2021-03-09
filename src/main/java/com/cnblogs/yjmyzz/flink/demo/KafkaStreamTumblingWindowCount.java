@@ -76,6 +76,7 @@ public class KafkaStreamTumblingWindowCount {
                 })
                 .keyBy(v -> v.t1())
                 .timeWindow(Time.minutes(1))
+                .allowedLateness(Time.seconds(10))
                 .sum(1);
 
         // 4. 打印结果
