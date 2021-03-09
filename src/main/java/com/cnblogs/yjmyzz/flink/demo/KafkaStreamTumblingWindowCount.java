@@ -1,11 +1,13 @@
 package com.cnblogs.yjmyzz.flink.demo;
 
-import akka.japi.tuple.Tuple3;
 import com.google.gson.Gson;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.api.java.typeutils.TupleTypeInfo;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -49,6 +51,7 @@ public class KafkaStreamTumblingWindowCount {
 
         // 3.处理逻辑
         SingleOutputStreamOperator<Tuple3<String, Integer, String>> counts = env
+                .setParallelism(1)
                 .addSource(
                         new FlinkKafkaConsumer011<>(
                                 SOURCE_TOPIC,
@@ -74,14 +77,15 @@ public class KafkaStreamTumblingWindowCount {
                         out.collect(new Tuple3<>(word.trim(), 1, windowTime));
                     }
                 })
-                .keyBy(v -> v.t1())
+                .returns(((TypeInformation) TupleTypeInfo.getBasicTupleTypeInfo(String.class, Integer.class, String.class)))
+                .keyBy(0)
                 .timeWindow(Time.minutes(1))
                 .allowedLateness(Time.seconds(10))
                 .sum(1);
 
         // 4. 打印结果
         counts.addSink(new FlinkKafkaProducer010<>("localhost:9092", SINK_TOPIC,
-                (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.t3() + " (" + element.t1() + "," + element.t2() + ")").getBytes()));
+                (SerializationSchema<Tuple3<String, Integer, String>>) element -> (element.f2 + " (" + element.f1 + "," + element.f0 + ")").getBytes()));
         counts.print();
 
         // execute program
